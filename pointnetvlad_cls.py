@@ -19,7 +19,7 @@ def placeholder_inputs(batch_num_queries, num_pointclouds_per_query, num_point):
 
 #Adopted from the original pointnet code
 def forward(point_cloud, is_training, bn_decay=None):
-    """PointNetVLAD,    INPUT is batch_num_queries X num_pointclouds_per_query X num_points_per_pointcloud X 3, 
+    """PointNetVLAD,    INPUT is batch_num_queries X num_pointclouds_per_query X num_points_per_pointcloud X 3,
                         OUTPUT batch_num_queries X num_pointclouds_per_query X output_dim """
     batch_num_queries = point_cloud.get_shape()[0].value
     num_pointclouds_per_query = point_cloud.get_shape()[1].value
@@ -60,11 +60,12 @@ def forward(point_cloud, is_training, bn_decay=None):
                          is_training=is_training,
                          scope='conv5', bn_decay=bn_decay)
 
-    NetVLAD = lp.NetVLAD(feature_size=1024, max_samples=num_points, cluster_size=CLUSTER_SIZE, 
+    # TODO: reroute 3DFeatNet output (local feature descriptors) here
+    NetVLAD = lp.NetVLAD(feature_size=1024, max_samples=num_points, cluster_size=CLUSTER_SIZE,
                     output_dim=OUTPUT_DIM, gating=True, add_batch_norm=True,
                     is_training=is_training)
 
-    net= tf.reshape(net,[-1,1024])
+    net = tf.reshape(net,[-1,1024])
     net = tf.nn.l2_normalize(net,1)
     output = NetVLAD.forward(net)
     print(output)
@@ -72,6 +73,29 @@ def forward(point_cloud, is_training, bn_decay=None):
     #normalize to have norm 1
     output = tf.nn.l2_normalize(output,1)
     output =  tf.reshape(output,[batch_num_queries,num_pointclouds_per_query,OUTPUT_DIM])
+
+    return output
+
+
+def forward_netvlad(net, is_training, bn_decay=None):
+    BATCH_NUM_QUERIES = 2
+    NUM_POINTCLOUDS_PER_QUERY = 2
+    NUM_POINTS = 4096
+    CLUSTER_SIZE = 64
+    OUTPUT_DIM = 256
+
+    NetVLAD = lp.NetVLAD(feature_size=1024, max_samples=NUM_POINTS, cluster_size=CLUSTER_SIZE,
+                    output_dim=OUTPUT_DIM, gating=True, add_batch_norm=True,
+                    is_training=is_training)
+
+    net = tf.reshape(net,[-1,1024])
+    net = tf.nn.l2_normalize(net,1)
+    output = NetVLAD.forward(net)
+    print(output)
+
+    #normalize to have norm 1
+    output = tf.nn.l2_normalize(output,1)
+    output =  tf.reshape(output,[BATCH_NUM_QUERIES, NUM_POINTCLOUDS_PER_QUERY, OUTPUT_DIM])
 
     return output
 
@@ -135,7 +159,7 @@ def lazy_softmargin_loss(q_vec, pos_vecs, neg_vecs):
 
 def quadruplet_loss_sm(q_vec, pos_vecs, neg_vecs, other_neg, m2):
     soft_loss= softmargin_loss(q_vec, pos_vecs, neg_vecs)
-    
+
     best_pos=best_pos_distance(q_vec, pos_vecs)
     num_neg = neg_vecs.get_shape()[1]
     batch = q_vec.get_shape()[0]
@@ -148,11 +172,11 @@ def quadruplet_loss_sm(q_vec, pos_vecs, neg_vecs, other_neg, m2):
 
     total_loss= soft_loss+second_loss
 
-    return total_loss   
+    return total_loss
 
 def lazy_quadruplet_loss_sm(q_vec, pos_vecs, neg_vecs, other_neg, m2):
     soft_loss= lazy_softmargin_loss(q_vec, pos_vecs, neg_vecs)
-    
+
     best_pos=best_pos_distance(q_vec, pos_vecs)
     num_neg = neg_vecs.get_shape()[1]
     batch = q_vec.get_shape()[0]
@@ -165,11 +189,11 @@ def lazy_quadruplet_loss_sm(q_vec, pos_vecs, neg_vecs, other_neg, m2):
 
     total_loss= soft_loss+second_loss
 
-    return total_loss   
+    return total_loss
 
 def quadruplet_loss(q_vec, pos_vecs, neg_vecs, other_neg, m1, m2):
     trip_loss= triplet_loss(q_vec, pos_vecs, neg_vecs, m1)
-    
+
     best_pos=best_pos_distance(q_vec, pos_vecs)
     num_neg = neg_vecs.get_shape()[1]
     batch = q_vec.get_shape()[0]
@@ -182,11 +206,11 @@ def quadruplet_loss(q_vec, pos_vecs, neg_vecs, other_neg, m1, m2):
 
     total_loss= trip_loss+second_loss
 
-    return total_loss 
+    return total_loss
 
 def lazy_quadruplet_loss(q_vec, pos_vecs, neg_vecs, other_neg, m1, m2):
     trip_loss= lazy_triplet_loss(q_vec, pos_vecs, neg_vecs, m1)
-    
+
     best_pos=best_pos_distance(q_vec, pos_vecs)
     num_neg = neg_vecs.get_shape()[1]
     batch = q_vec.get_shape()[0]
@@ -199,9 +223,4 @@ def lazy_quadruplet_loss(q_vec, pos_vecs, neg_vecs, other_neg, m1, m2):
 
     total_loss= trip_loss+second_loss
 
-    return total_loss  
-
-
-
-
-
+    return total_loss
