@@ -95,7 +95,7 @@ def forward_netvlad(net, is_training, bn_decay=None):
 
     #normalize to have norm 1
     output = tf.nn.l2_normalize(output,1)
-    output =  tf.reshape(output,[BATCH_NUM_QUERIES, NUM_POINTCLOUDS_PER_QUERY, OUTPUT_DIM])
+    output = tf.reshape(output,[BATCH_NUM_QUERIES, NUM_POINTCLOUDS_PER_QUERY, OUTPUT_DIM])
 
     return output
 

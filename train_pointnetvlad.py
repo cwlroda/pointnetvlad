@@ -13,7 +13,9 @@ from loading_pointclouds import *
 from sklearn.neighbors import NearestNeighbors
 from sklearn.neighbors import KDTree
 from models.net_factory import get_network
+from utils import get_tensors_in_checkpoint_file
 
+CKPT_PATH = './ckpt/secondstage/ckpt/checkpoint.ckpt-210000'
 
 #params
 parser = argparse.ArgumentParser()
@@ -30,13 +32,18 @@ parser.add_argument('--decay_step', type=int, default=200000, help='Decay step f
 parser.add_argument('--decay_rate', type=float, default=0.7, help='Decay rate for lr decay [default: 0.7]')
 parser.add_argument('--margin_1', type=float, default=0.5, help='Margin for hinge loss [default: 0.5]')
 parser.add_argument('--margin_2', type=float, default=0.2, help='Margin for hinge loss [default: 0.2]')
-parser.add_argument('--pretrained', type=str, default='', help='Pretrained model path for transfer learning')
+parser.add_argument('--pretrained', type=str, default=CKPT_PATH, help='Pretrained model path for transfer learning')
 parser.add_argument('--base_scale', type=float, default=2.0,
                     help='Radius for sampling clusters (default: 2.0)')
 parser.add_argument('--num_samples', type=int, default=64,
                     help='Maximum number of points to consider per cluster (default: 64)')
 parser.add_argument('--feature_dim', type=int, default=32, choices=[16, 32, 64, 128],
                     help='Feature dimension size (default: 32)')
+parser.add_argument('--data_dim', type=int, default=6,
+                    help='Input dimension for data. Note: Feat3D-Net will only use the first 3 dimensions (default: 6)')
+parser.add_argument('--transfer_learning', type=bool, default=False, help='Set to true if using a pretrained model, else false if training from scratch')
+parser.add_argument('--model', type=str, default='3DFeatNet',
+                    help='Model to load')
 FLAGS = parser.parse_args()
 
 BATCH_NUM_QUERIES = FLAGS.batch_num_queries
@@ -98,15 +105,70 @@ def get_learning_rate(epoch):
     learning_rate = tf.maximum(learning_rate, 0.00001) # CLIP THE LEARNING RATE!
     return learning_rate
 
+def initialize_model(sess, checkpoint, ignore_missing_vars=False, restore_exclude=None):
+    print('Initializing weights')
+
+    sess.run(tf.global_variables_initializer())
+
+    if checkpoint is not None:
+
+        print('Restoring model from {}'.format(FLAGS.pretrained))
+
+        model_var_list = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES)
+        print(tf.GraphKeys.GLOBAL_VARIABLES)
+        exclude_list = []
+        if restore_exclude is not None:
+            for e in restore_exclude:
+                exclude_list += tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES, scope=e)
+        for e in exclude_list:
+            print('Excluded from model restore: %s', e.op.name)
+
+        if ignore_missing_vars:
+            checkpoint_var_names = get_tensors_in_checkpoint_file(checkpoint)
+            missing = [m.op.name for m in model_var_list if m.op.name not in checkpoint_var_names and m not in exclude_list]
+
+            for m in missing:
+                print('Variable missing from checkpoint: %s', m)
+
+            var_list = [m for m in model_var_list if m.op.name in checkpoint_var_names and m not in exclude_list]
+
+        else:
+            var_list = [m for m in model_var_list if m not in exclude_list]
+
+        print(var_list)
+
+        saver = tf.train.Saver(var_list)
+
+        saver.restore(sess, checkpoint)
+
 def transfer_learning():
     global HARD_NEGATIVES
 
+    # Model
     param = {'NoRegress': False, 'BaseScale': FLAGS.base_scale, 'Attention': True,
              'num_clusters': -1, 'num_samples': FLAGS.num_samples, 'feature_dim': FLAGS.feature_dim}
-    model = get_network(FLAGS.pretrained)(param)
+    model = get_network(FLAGS.model)(param)
 
-    with tf.Graph().as_default():
+    # placeholders
+    is_training = tf.placeholder(tf.bool)
+    cloud_pl, _, _ = model.get_placeholders(FLAGS.data_dim)
+
+    # Ops1
+    xyz_op, features_op, attention_op, end_points = model.get_inference_model(cloud_pl, is_training, use_bn=True,
+                                                                              compute_det_gradients=True)
+
+
+    with tf.Session(config=config) as sess:
+        initialize_model(sess, FLAGS.pretrained)
+
         with tf.device('/gpu:'+str(GPU_INDEX)):
+            graph = tf.get_default_graph()
+            print(graph.get_operations)
+            sys.exit(0)
+            op_to_restore = graph.get_tensor_by_name("")
+
+            print("In Graph")
+
             is_training_pl = tf.placeholder(tf.bool, shape=())
             print(is_training_pl)
 
@@ -116,7 +178,7 @@ def transfer_learning():
             tf.summary.scalar('bn_decay', bn_decay)
 
             with tf.variable_scope("query_triplets") as scope:
-                out_vecs = forward_netvlad(model, is_training_pl, bn_decay=bn_decay)
+                out_vecs = forward_netvlad(op_to_restore, is_training_pl, bn_decay=bn_decay)
                 print(out_vecs)
                 q_vec, pos_vecs, neg_vecs, other_neg_vec= tf.split(out_vecs, [1,POSITIVES_PER_QUERY, NEGATIVES_PER_QUERY,1],1)
                 print(q_vec)
@@ -142,57 +204,44 @@ def transfer_learning():
             with tf.control_dependencies(update_ops):
                 train_op = optimizer.minimize(loss, global_step=batch)
 
-            # Add ops to save and restore all the variables.
-            saver = tf.train.Saver()
+            # Add summary writers
+            merged = tf.summary.merge_all()
+            train_writer = tf.summary.FileWriter(os.path.join(LOG_DIR, 'train'),
+                                    sess.graph)
+            test_writer = tf.summary.FileWriter(os.path.join(LOG_DIR, 'test'))
 
-        # Create a session
-        gpu_options = tf.GPUOptions(per_process_gpu_memory_fraction=0.95)
-        config = tf.ConfigProto(gpu_options=gpu_options)
-        config.gpu_options.allow_growth = True
-        config.allow_soft_placement = True
-        config.log_device_placement = False
+            # Initialize a new model
+            # init = tf.global_variables_initializer()
+            # sess.run(init)
+            # print("Initialized")
 
-        sess = tf.Session(config=config)
+            # Restore a model
+            # saver.restore(sess, os.path.join(LOG_DIR, "model.ckpt"))
+            # print("Model restored.")
 
-        # Add summary writers
-        merged = tf.summary.merge_all()
-        train_writer = tf.summary.FileWriter(os.path.join(LOG_DIR, 'train'),
-                                  sess.graph)
-        test_writer = tf.summary.FileWriter(os.path.join(LOG_DIR, 'test'))
-
-        # Initialize a new model
-        init = tf.global_variables_initializer()
-        sess.run(init)
-        print("Initialized")
-
-        # Restore a model
-        # saver.restore(sess, os.path.join(LOG_DIR, "model.ckpt"))
-        # print("Model restored.")
-
-
-        ops = {'query': query,
-               'positives': positives,
-               'negatives': negatives,
-               'other_negatives': other_negatives,
-               'is_training_pl': is_training_pl,
-               'loss': loss,
-               'train_op': train_op,
-               'merged': merged,
-               'step': batch,
-               'epoch_num': epoch_num,
-               'q_vec':q_vec,
-               'pos_vecs': pos_vecs,
-               'neg_vecs': neg_vecs,
-               'other_neg_vec': other_neg_vec}
+            ops = {'query': query,
+                'positives': positives,
+                'negatives': negatives,
+                'other_negatives': other_negatives,
+                'is_training_pl': is_training_pl,
+                'loss': loss,
+                'train_op': train_op,
+                'merged': merged,
+                'step': batch,
+                'epoch_num': epoch_num,
+                'q_vec':q_vec,
+                'pos_vecs': pos_vecs,
+                'neg_vecs': neg_vecs,
+                'other_neg_vec': other_neg_vec}
 
 
-        for epoch in range(MAX_EPOCH):
-            print(epoch)
-            print()
-            log_string('**** EPOCH %03d ****' % (epoch))
-            sys.stdout.flush()
+            for epoch in range(MAX_EPOCH):
+                print(epoch)
+                print()
+                log_string('**** EPOCH %03d ****' % (epoch))
+                sys.stdout.flush()
 
-            train_one_epoch(sess, ops, train_writer, test_writer, epoch, saver)
+                train_one_epoch(sess, ops, train_writer, test_writer, epoch, saver)
 
 def train():
     global HARD_NEGATIVES
@@ -265,8 +314,8 @@ def train():
         print("Initialized")
 
         # Restore a model
-        # saver.restore(sess, os.path.join(LOG_DIR, "model.ckpt"))
-        # print("Model restored.")
+        saver.restore(sess, FLAGS.pretrained)
+        print("Model restored.")
 
 
         ops = {'query': query,
@@ -558,4 +607,15 @@ def get_latent_vectors(sess, ops, dict_to_process):
     return q_output
 
 if __name__ == "__main__":
-    train()
+    gpu_options = tf.GPUOptions(per_process_gpu_memory_fraction=0.95)
+    config = tf.ConfigProto(gpu_options=gpu_options)
+    config.gpu_options.allow_growth = True
+    config.allow_soft_placement = True
+    config.log_device_placement = False
+
+    if FLAGS.transfer_learning:
+        with tf.device('/CPU:0'):
+            transfer_learning()
+
+    else:
+        train()
