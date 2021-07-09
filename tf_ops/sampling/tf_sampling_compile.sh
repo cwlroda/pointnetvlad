@@ -8,4 +8,4 @@ g++ -std=c++11 tf_sampling.cpp tf_sampling_g.cu.o -o tf_sampling_so.so -shared -
   -I ${TF_INC} \
   -I ${TF_INC}/external/nsync/public \
   -I /usr/local/cuda-10.0/include -lcudart -L /usr/local/cuda-10.0/lib64/ \
-  -L${TF_LIB} -l:libtensorflow_framework.so.1 -O2
+  -L${TF_LIB} -l:libtensorflow_framework.so.1 -O2 -D_GLIBCXX_USE_CXX11_ABI=0

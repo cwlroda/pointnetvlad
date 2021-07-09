@@ -14,6 +14,7 @@ from sklearn.neighbors import NearestNeighbors
 from sklearn.neighbors import KDTree
 from models.net_factory import get_network
 from utils import get_tensors_in_checkpoint_file
+from pprint import pprint
 
 CKPT_PATH = './ckpt/secondstage/ckpt/checkpoint.ckpt-210000'
 
@@ -61,7 +62,7 @@ DECAY_RATE = FLAGS.decay_rate
 MARGIN1 = FLAGS.margin_1
 MARGIN2 = FLAGS.margin_2
 
-TRAIN_FILE = 'generating_queries/training_queries_baseline.pickle'
+TRAIN_FILE = 'generating_queries/training_queries_refine.pickle'
 TEST_FILE = 'generating_queries/test_queries_baseline.pickle'
 
 LOG_DIR = FLAGS.log_dir
@@ -135,7 +136,7 @@ def initialize_model(sess, checkpoint, ignore_missing_vars=False, restore_exclud
         else:
             var_list = [m for m in model_var_list if m not in exclude_list]
 
-        print(var_list)
+        pprint(var_list)
 
         saver = tf.train.Saver(var_list)
 
@@ -162,11 +163,8 @@ def transfer_learning():
         initialize_model(sess, FLAGS.pretrained)
 
         with tf.device('/gpu:'+str(GPU_INDEX)):
-            graph = tf.get_default_graph()
-            print(graph.get_operations)
-            sys.exit(0)
-            op_to_restore = graph.get_tensor_by_name("")
-
+            # graph = tf.get_default_graph()
+            # last_layer = graph.get_tensor_by_name("description/layer1/conv_post_0/conv2d/weights:0")
             print("In Graph")
 
             is_training_pl = tf.placeholder(tf.bool, shape=())
@@ -178,9 +176,9 @@ def transfer_learning():
             tf.summary.scalar('bn_decay', bn_decay)
 
             with tf.variable_scope("query_triplets") as scope:
-                out_vecs = forward_netvlad(op_to_restore, is_training_pl, bn_decay=bn_decay)
+                out_vecs = forward_netvlad(features_op, is_training_pl, bn_decay=bn_decay)
                 print(out_vecs)
-                q_vec, pos_vecs, neg_vecs, other_neg_vec= tf.split(out_vecs, [1,POSITIVES_PER_QUERY, NEGATIVES_PER_QUERY,1],1)
+                q_vec, pos_vecs, neg_vecs, other_neg_vec = tf.split(out_vecs, [1,POSITIVES_PER_QUERY, NEGATIVES_PER_QUERY,1],1)
                 print(q_vec)
                 print(pos_vecs)
                 print(neg_vecs)

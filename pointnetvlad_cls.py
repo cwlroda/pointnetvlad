@@ -88,7 +88,9 @@ def forward_netvlad(net, is_training, bn_decay=None):
                     output_dim=OUTPUT_DIM, gating=True, add_batch_norm=True,
                     is_training=is_training)
 
-    net = tf.reshape(net,[-1,1024])
+    print(net.shape)
+
+    net = tf.reshape(net, [-1, 1024])
     net = tf.nn.l2_normalize(net,1)
     output = NetVLAD.forward(net)
     print(output)
