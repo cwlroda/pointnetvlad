@@ -62,7 +62,7 @@ DECAY_RATE = FLAGS.decay_rate
 MARGIN1 = FLAGS.margin_1
 MARGIN2 = FLAGS.margin_2
 
-TRAIN_FILE = 'generating_queries/training_queries_refine.pickle'
+TRAIN_FILE = 'generating_queries/training_queries_baseline.pickle'
 TEST_FILE = 'generating_queries/test_queries_baseline.pickle'
 
 LOG_DIR = FLAGS.log_dir
@@ -113,7 +113,7 @@ def initialize_model(sess, checkpoint, ignore_missing_vars=False, restore_exclud
 
     if checkpoint is not None:
 
-        print('Restoring model from {}'.format(FLAGS.pretrained))
+        print('Restoring model from {}'.format(checkpoint))
 
         model_var_list = tf.get_collection(tf.GraphKeys.GLOBAL_VARIABLES)
         print(tf.GraphKeys.GLOBAL_VARIABLES)
@@ -145,26 +145,31 @@ def initialize_model(sess, checkpoint, ignore_missing_vars=False, restore_exclud
 def transfer_learning():
     global HARD_NEGATIVES
 
-    # Model
-    param = {'NoRegress': False, 'BaseScale': FLAGS.base_scale, 'Attention': True,
-             'num_clusters': -1, 'num_samples': FLAGS.num_samples, 'feature_dim': FLAGS.feature_dim}
-    model = get_network(FLAGS.model)(param)
+    with tf.device('/CPU:0'):
+        # Model
+        param = {'NoRegress': False, 'BaseScale': FLAGS.base_scale, 'Attention': True,
+                'num_clusters': -1, 'num_samples': FLAGS.num_samples, 'feature_dim': FLAGS.feature_dim}
+        model = get_network(FLAGS.model)(param)
 
-    # placeholders
-    is_training = tf.placeholder(tf.bool)
-    cloud_pl, _, _ = model.get_placeholders(FLAGS.data_dim)
+        # placeholders
+        is_training = tf.placeholder(tf.bool)
+        cloud_pl, _, _ = model.get_placeholders(FLAGS.data_dim)
 
-    # Ops1
-    xyz_op, features_op, attention_op, end_points = model.get_inference_model(cloud_pl, is_training, use_bn=True,
-                                                                              compute_det_gradients=True)
+        # Ops1
+        xyz_op, features_op, attention_op, end_points = model.get_inference_model(cloud_pl, is_training, use_bn=True,
+                                                                                compute_det_gradients=True)
 
+    print("Got inference model")
 
     with tf.Session(config=config) as sess:
-        initialize_model(sess, FLAGS.pretrained)
-
         with tf.device('/gpu:'+str(GPU_INDEX)):
+            initialize_model(sess, CKPT_PATH)
+
             # graph = tf.get_default_graph()
-            # last_layer = graph.get_tensor_by_name("description/layer1/conv_post_0/conv2d/weights:0")
+            # print(graph.get_operations)
+            # sys.exit(0)
+            # op_to_restore = graph.get_tensor_by_name("")
+
             print("In Graph")
 
             is_training_pl = tf.placeholder(tf.bool, shape=())
@@ -612,8 +617,7 @@ if __name__ == "__main__":
     config.log_device_placement = False
 
     if FLAGS.transfer_learning:
-        with tf.device('/CPU:0'):
-            transfer_learning()
+        transfer_learning()
 
     else:
         train()
