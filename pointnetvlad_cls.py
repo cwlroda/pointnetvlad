@@ -11,6 +11,7 @@ from transform_nets import input_transform_net, feature_transform_net
 #Adopted from Antoine Meich
 import loupe as lp
 
+from models.feat3dnet import get_train_model, get_inference_model
 
 
 def placeholder_inputs(batch_num_queries, num_pointclouds_per_query, num_point):
@@ -77,14 +78,25 @@ def forward(point_cloud, is_training, bn_decay=None):
     return output
 
 
-def forward_netvlad(net, is_training, bn_decay=None):
-    BATCH_NUM_QUERIES = 2
-    NUM_POINTCLOUDS_PER_QUERY = 2
-    NUM_POINTS = 4096
-    CLUSTER_SIZE = 64
-    OUTPUT_DIM = 256
+def forward_netvlad(point_cloud, is_training, bn_decay=None):
+    """PointNetVLAD,    INPUT is batch_num_queries X num_pointclouds_per_query X num_points_per_pointcloud X 3,
+                        OUTPUT batch_num_queries X num_pointclouds_per_query X output_dim """
+    batch_num_queries = point_cloud.get_shape()[0].value
+    num_pointclouds_per_query = point_cloud.get_shape()[1].value
+    num_points = point_cloud.get_shape()[2].value
+    CLUSTER_SIZE=64
+    OUTPUT_DIM=256
+    point_cloud = tf.reshape(point_cloud, [batch_num_queries*num_pointclouds_per_query, num_points,3])
 
-    NetVLAD = lp.NetVLAD(feature_size=1024, max_samples=NUM_POINTS, cluster_size=CLUSTER_SIZE,
+    with tf.variable_scope('transform_net1') as sc:
+        input_transform = input_transform_net(point_cloud, is_training, bn_decay, K=3)
+    point_cloud_transformed = tf.matmul(point_cloud, input_transform)
+    input_image = tf.expand_dims(point_cloud_transformed, -1)
+
+    
+
+
+    NetVLAD = lp.NetVLAD(feature_size=1024, max_samples=num_points, cluster_size=CLUSTER_SIZE,
                     output_dim=OUTPUT_DIM, gating=True, add_batch_norm=True,
                     is_training=is_training)
 
@@ -97,7 +109,7 @@ def forward_netvlad(net, is_training, bn_decay=None):
 
     #normalize to have norm 1
     output = tf.nn.l2_normalize(output,1)
-    output = tf.reshape(output,[BATCH_NUM_QUERIES, NUM_POINTCLOUDS_PER_QUERY, OUTPUT_DIM])
+    output = tf.reshape(output,[batch_num_queries, num_pointclouds_per_query, OUTPUT_DIM])
 
     return output
 
